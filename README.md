@@ -1,78 +1,78 @@
 # 📦 CAN Accelerometer Logger
+ is a small STM32-based project that reads 3-axis acceleration data from an ADXL345 sensor, buffers it for 1 second at 1 kHz, and then transmits it via UART and CAN bus. Perfect for capturing impact or vibration events in embedded systems.
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-STM32-blue.svg)]()
 [![Interface](https://img.shields.io/badge/interface-CAN%2FUART-green.svg)]()
 [![Status](https://img.shields.io/badge/status-Development-yellow.svg)]()
 
-A compact STM32-based motion sensor module using an ADXL345 digital accelerometer.  
-This device logs 3-axis acceleration data at 1 kHz for 1 second (1000 samples) and then transmits the data via **CAN** and **UART**.
-
----
-
 ## 🚀 Features
 
-- ✅ SPI communication with ADXL345
-- ✅ Buffered sampling at **1 kHz** for 1 second
-- ✅ Data output via:
-  - UART (CSV format)
-  - CAN bus (fragmented transfer with optional header and CRC)
-- ✅ Trigger via GPIO (e.g. rising edge or external button)
-- ✅ Visual feedback via onboard LED
+- 🧭 3-axis accelerometer data from ADXL345 via SPI  
+- ⏱️ 1000 samples per second (1 kHz), total 1000 samples in buffer  
+- 🟢 Trigger signal via GPIO (rising edge)  
+- 💾 Data is buffered in RAM, sent after acquisition  
+- 📤 Data output via UART and optionally via CAN  
+- 📦 CAN data transmission in chunks with custom protocol  
+- 🧪 Simple and compact C code, ideal for lab testing or automotive debug setups  
 
----
+## ⚙️ Requirements
 
-## 🧠 Technical Overview
+STM32 microcontroller with:
 
-| Feature         | Value                    |
-|----------------|--------------------------|
-| MCU            | STM32G4xx (e.g. G431)    |
-| Sensor         | ADXL345 (±8g range)      |
-| Sampling Rate  | 1000 Hz (1 kHz)          |
-| Buffer Size    | 1000 samples (x,y,z)     |
-| Interface      | SPI (ADXL), UART, CAN    |
-| CAN Speed      | 500 kbit/s               |
-| CRC            | CRC8 for data integrity  |
+- SPI (ADXL345)
+- UART (for output)
+- GPIO (for trigger input)
+- CAN (for data transmission)
+- ADXL345 accelerometer (3.3 V logic)
+- STM32CubeMX / STM32CubeIDE (for initial setup)
 
----
+## 🔌 Wiring
 
-## ⚙️ Trigger Modes
+| Signal       | STM32 Pin  | ADXL345       |
+|--------------|------------|----------------|
+| SPI MOSI     | e.g. PA7   | SDI            |
+| SPI MISO     | e.g. PA6   | SDO            |
+| SPI SCK      | e.g. PA5   | SCL            |
+| SPI CS       | e.g. PB0   | CS             |
+| Trigger Input| e.g. PA8   | (external source) |
+| UART TX      | e.g. PA9   | (debug terminal) |
+| CAN TX / RX  | any FDCAN-capable pins |
 
-| Mode       | Description                          |
-|------------|--------------------------------------|
-| GPIO       | Starts on rising edge                |
-| Button     | Optional fallback (User button)      |
+## 🧪 Example Workflow
 
----
+1. Startup  
+2. Wait for trigger input (PA8 HIGH)  
+3. Sample 1000 accelerometer values (XYZ)  
+4. After sampling:  
+   - Send data over UART (CSV format)  
+   - Send header + chunked payload via CAN  
 
-## 🖧 CAN Communication
+## 💬 CAN Protocol Overview
 
-- The device sends a header frame with total data length.
-- Followed by multiple frames (8 bytes each).
-- Designed to work with another STM32 as a CAN receiver & I2C bridge.
+- **Request:** ID 0x123, single byte 0xAB to request data  
+- **Header:** ID 0x321, first frame = 2 bytes length (e.g. 0x27 0x11 = 10001)  
+- **Payload:** subsequent frames with raw buffer data  
 
----
+## 📂 Folder Structure
 
-## 📡 UART Output
+```
+CAN_Accelerometer_Logger/
+├── Core/
+│   ├── Src/
+│   └── Inc/
+├── Drivers/
+├── .gitignore
+├── README.md
+└── LICENSE (CC0-1.0)
+```
 
-- Data is streamed as comma-separated values (CSV):
-  ```
-  124,0,-1032
-  123,1,-1033
-  ...
-  ```
+## 📄 License
 
----
+This project is licensed under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) (Public Domain Dedication). You can use it without attribution – though a ⭐ on GitHub is always appreciated :)
 
-## 🛠️ Build Requirements
+## ✨ Credits
 
-- STM32CubeIDE or Makefile toolchain
-- STM32G4 family MCU (e.g. Nucleo-G431RB)
-- ADXL345 accelerometer
-- Proper CAN transceivers (e.g. TJA1050)
+Made with ❤️ by **Styria Electronics** for high-performance embedded data acquisition over CAN bus.
 
----
-
-## 📎 License
-
-This project is licensed under the MIT License.
+🛠️ Contributions welcome!
