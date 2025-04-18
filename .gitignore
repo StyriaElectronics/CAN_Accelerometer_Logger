@@ -1,0 +1,36 @@
+# STM32CubeMX / STM32CubeIDE
+*.launch
+*.settings/
+*.cproject
+*.project
+*.mxproject
+*.log
+*.tmp
+*.dep
+*.elf
+*.bin
+*.hex
+*.map
+*.list
+*.o
+*.d
+*.gcno
+*.gcda
+*.gcov
+*.swp
+
+# Build artifacts
+/Debug/
+/Release/
+/build/
+
+# Generated .ioc-backups
+*.ioc-backup
+
+# VSCode (falls verwendet)
+.vscode/
+
+# macOS / Windows system files
+.DS_Store
+Thumbs.db
+desktop.ini
