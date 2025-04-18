@@ -1,7 +1,6 @@
 # 📦 CAN Accelerometer Logger
  is a small STM32-based project that reads 3-axis acceleration data from an ADXL345 sensor, buffers it for 1 second at 1 kHz, and then transmits it via UART and CAN bus. Perfect for capturing impact or vibration events in embedded systems.
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-STM32-blue.svg)]()
 [![Interface](https://img.shields.io/badge/interface-CAN%2FUART-green.svg)]()
 [![Status](https://img.shields.io/badge/status-Development-yellow.svg)]()
