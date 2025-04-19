@@ -22,7 +22,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
-
+#include "string.h"
 
 /* USER CODE END Includes */
 
@@ -73,6 +73,8 @@ volatile uint16_t sampleIndex = 0;
 volatile uint8_t recording = 0;
 volatile uint8_t triggered = 0;
 volatile uint8_t startSampling = 0;
+#define CAN_ID_HEADER 0x321
+#define CAN_DLC 8
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -93,51 +95,7 @@ uint8_t calculate_crc8(uint8_t *data, uint16_t length)
     }
     return crc;
 }
-void sendAccelDataViaCAN(void)
-{
-    uint8_t flatBuffer[SAMPLE_COUNT * 6];
-    for (uint16_t i = 0; i < SAMPLE_COUNT; i++) {
-        flatBuffer[i * 6 + 0] = accelBuffer[i].x & 0xFF;
-        flatBuffer[i * 6 + 1] = (accelBuffer[i].x >> 8) & 0xFF;
-        flatBuffer[i * 6 + 2] = accelBuffer[i].y & 0xFF;
-        flatBuffer[i * 6 + 3] = (accelBuffer[i].y >> 8) & 0xFF;
-        flatBuffer[i * 6 + 4] = accelBuffer[i].z & 0xFF;
-        flatBuffer[i * 6 + 5] = (accelBuffer[i].z >> 8) & 0xFF;
-    }
 
-    uint16_t totalLength = SAMPLE_COUNT * 6 + 1; // +1 für CRC
-
-    // Header senden mit Datenlänge
-    FDCAN_TxHeaderTypeDef txHeader;
-    txHeader.Identifier = 0x321;
-    txHeader.IdType = FDCAN_STANDARD_ID;
-    txHeader.TxFrameType = FDCAN_DATA_FRAME;
-    txHeader.DataLength = FDCAN_DLC_BYTES_8;
-    txHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    txHeader.BitRateSwitch = FDCAN_BRS_OFF;
-    txHeader.FDFormat = FDCAN_CLASSIC_CAN;
-    txHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
-    txHeader.MessageMarker = 0;
-
-    uint8_t headerPayload[8] = { totalLength >> 8, totalLength & 0xFF };
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &txHeader, headerPayload);
-    HAL_Delay(1);
-
-    // Nutzdaten in 8-Byte Blöcken übertragen
-    for (uint16_t i = 0; i < totalLength - 1; i += 8)
-    {
-        uint8_t chunk[8] = {0xFF};
-        uint8_t len = (totalLength - 1 - i >= 8) ? 8 : (totalLength - 1 - i);
-        memcpy(chunk, &flatBuffer[i], len);
-        HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &txHeader, chunk);
-        HAL_Delay(1);
-    }
-
-    // CRC8 berechnen und einzeln senden
-    uint8_t crc = calculate_crc8(flatBuffer, SAMPLE_COUNT * 6);
-    uint8_t crcPayload[8] = { crc, 0xAA, 0x55, 0, 0, 0, 0, 0 }; // Rest optional
-    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &txHeader, crcPayload);
-}
 uint8_t ADXL345_ReadRegister(uint8_t reg)
 {
     uint8_t tx[] = { 0x80 | reg, 0x00 }; // 0x80 = Lesezugriff
@@ -202,7 +160,78 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
     }
 }
 
+void send_data_over_can(void)
+{
+    FDCAN_TxHeaderTypeDef txHeader = {0};
+    txHeader.Identifier = CAN_ID_HEADER;
+    txHeader.IdType = FDCAN_STANDARD_ID;
+    txHeader.TxFrameType = FDCAN_DATA_FRAME;
+    txHeader.DataLength = FDCAN_DLC_BYTES_8;
+    txHeader.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
+    txHeader.BitRateSwitch = FDCAN_BRS_OFF;
+    txHeader.FDFormat = FDCAN_CLASSIC_CAN;
+    txHeader.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+    txHeader.MessageMarker = 0;
 
+    uint8_t txData[8];
+    uint32_t totalBytes = SAMPLE_COUNT * sizeof(AccelSample); // 1000 × 6 = 6000
+    uint16_t totalLen = totalBytes + 1; // +1 CRC
+
+    //  1. Header senden (2 Byte Länge)
+    txData[0] = (uint8_t)(totalLen >> 8);
+    txData[1] = (uint8_t)(totalLen & 0xFF);
+    memset(&txData[2], 0xFF, 6); // Rest füllen
+    HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &txHeader, txData);
+    HAL_Delay(1); // Optional: Bus entlasten
+
+    // 2. Payload vorbereiten
+    uint8_t rawData[totalLen];
+    memcpy(rawData, (uint8_t*)accelBuffer, totalBytes);
+
+    // CRC8 berechnen
+    uint8_t crc = 0;
+    for (uint16_t i = 0; i < totalBytes; i++)
+    {
+        crc ^= rawData[i];
+        for (uint8_t j = 0; j < 8; j++)
+        {
+            if (crc & 0x80)
+                crc = (crc << 1) ^ 0x07;
+            else
+                crc <<= 1;
+        }
+    }
+    rawData[totalBytes] = crc;
+
+    // 📤 3. In 8-Byte-Pakete aufteilen und senden
+    for (uint16_t i = 0; i < totalLen; i += 8)
+    {
+        uint8_t len = (totalLen - i >= 8) ? 8 : (totalLen - i);
+        memset(txData, 0xFF, 8);
+        memcpy(txData, &rawData[i], len);
+
+        HAL_FDCAN_AddMessageToTxFifoQ(&hfdcan1, &txHeader, txData);
+        HAL_Delay(1); // Optional für Stabilität
+    }
+
+    printf("CAN-Übertragung abgeschlossen (%d Bytes)\r\n", totalLen);
+}
+
+void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
+{
+    if (RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE)
+    {
+        FDCAN_RxHeaderTypeDef rxHeader;
+        uint8_t rxData[8];
+        HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &rxHeader, rxData);
+
+        if (rxHeader.Identifier == 0x123 && rxData[0] == 0xAB)
+        {
+            printf("Anfrage vom MTS erhalten – sende Daten...\r\n");
+            send_data_over_can();  // oder sendAccelDataViaCAN();
+        }
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -240,7 +269,10 @@ int main(void)
   MX_FDCAN1_Init();
   /* USER CODE BEGIN 2 */
   HAL_TIM_Base_Start_IT(&htim2);
-
+  if (HAL_FDCAN_Start(&hfdcan1) != HAL_OK)
+  {
+      Error_Handler();
+  }
   /* USER CODE END 2 */
 
   /* Initialize leds */
@@ -277,7 +309,7 @@ int main(void)
 		  // Trigger prüfen
 		      if (triggered == 0 && HAL_GPIO_ReadPin(Trigger_GPIO_Port, Trigger_Pin) == GPIO_PIN_SET)
 		      {
-		          printf("⬆️ Trigger erkannt\n");
+		          printf(" Trigger erkannt\n");
 		          triggered = 1;
 		          startSampling = 1;
 		      }
@@ -303,7 +335,8 @@ int main(void)
 		              HAL_Delay(1);  // optional: UART entlasten
 		          }
 		          // CAN Senden
-		          sendAccelDataViaCAN();
+		          send_data_over_can();
+
 		          sampleIndex = 0;
 		          triggered = 0;
 		          // LED AUS (Aufzeichnung + Senden fertig)
@@ -382,7 +415,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Instance = FDCAN1;
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
-  hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
+  hfdcan1.Init.Mode = FDCAN_MODE_EXTERNAL_LOOPBACK;
   hfdcan1.Init.AutoRetransmission = ENABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
@@ -394,7 +427,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.DataSyncJumpWidth = 1;
   hfdcan1.Init.DataTimeSeg1 = 1;
   hfdcan1.Init.DataTimeSeg2 = 1;
-  hfdcan1.Init.StdFiltersNbr = 0;
+  hfdcan1.Init.StdFiltersNbr = 1;
   hfdcan1.Init.ExtFiltersNbr = 0;
   hfdcan1.Init.TxFifoQueueMode = FDCAN_TX_FIFO_OPERATION;
   if (HAL_FDCAN_Init(&hfdcan1) != HAL_OK)
@@ -402,7 +435,15 @@ static void MX_FDCAN1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN FDCAN1_Init 2 */
-
+  FDCAN_FilterTypeDef sFilter;
+  sFilter.IdType = FDCAN_STANDARD_ID;
+  sFilter.FilterIndex = 0;
+  sFilter.FilterType = FDCAN_FILTER_MASK;
+  sFilter.FilterConfig = FDCAN_FILTER_TO_RXFIFO0;
+  sFilter.FilterID1 = 0x123;
+  sFilter.FilterID2 = 0x7FF; // Alle Bits vergleichen
+  HAL_FDCAN_ConfigFilter(&hfdcan1, &sFilter);
+  HAL_FDCAN_ActivateNotification(&hfdcan1, FDCAN_IT_RX_FIFO0_NEW_MESSAGE, 0);
   /* USER CODE END FDCAN1_Init 2 */
 
 }
@@ -527,7 +568,13 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(Trigger_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
+  /* --- FDCAN1 TX / RX ------------------------------------------------------- */
+  GPIO_InitStruct.Pin       = GPIO_PIN_12 | GPIO_PIN_11;   // PA12 = TX, PA11 = RX
+  GPIO_InitStruct.Mode      = GPIO_MODE_AF_PP;
+  GPIO_InitStruct.Pull      = GPIO_NOPULL;
+  GPIO_InitStruct.Speed     = GPIO_SPEED_FREQ_HIGH;
+  GPIO_InitStruct.Alternate = GPIO_AF9_FDCAN1;             // *** WICHTIG ***
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
