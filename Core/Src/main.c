@@ -23,6 +23,8 @@
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
 #include "string.h"
+#include <inttypes.h>  // ganz oben für PRIX32
+
 
 /* USER CODE END Includes */
 
@@ -75,6 +77,7 @@ volatile uint8_t triggered = 0;
 volatile uint8_t startSampling = 0;
 #define CAN_ID_HEADER 0x321
 #define CAN_DLC 8
+volatile uint8_t can_send_requested = 0;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -202,7 +205,9 @@ void send_data_over_can(void)
         }
     }
     rawData[totalBytes] = crc;
-
+    // 🔎 Debug-Ausgabe
+    printf("➡️  CRC berechnet: 0x%02X (vor dem Senden)\r\n", crc);
+    printf("📦 Gesamtlänge (inkl. CRC): %u Bytes\n", totalLen);
     // 📤 3. In 8-Byte-Pakete aufteilen und senden
     for (uint16_t i = 0; i < totalLen; i += 8)
     {
@@ -221,18 +226,27 @@ void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef *hfdcan, uint32_t RxFifo0ITs)
 {
     if (RxFifo0ITs & FDCAN_IT_RX_FIFO0_NEW_MESSAGE)
     {
+        // 🔧 Diese beiden Variablen MÜSSEN hier oben deklariert sein
         FDCAN_RxHeaderTypeDef rxHeader;
         uint8_t rxData[8];
-        HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &rxHeader, rxData);
+
+        // ✅ Jetzt dürfen wir sie verwenden
+        if (HAL_FDCAN_GetRxMessage(hfdcan, FDCAN_RX_FIFO0, &rxHeader, rxData) != HAL_OK) {
+            printf("❌ Fehler beim Lesen der CAN-Nachricht\r\n");
+            return;
+        }
 
         if (rxHeader.Identifier == 0x123 && rxData[0] == 0xAB)
         {
-            printf("Anfrage vom MTS erhalten – sende Daten...\r\n");
-            send_data_over_can();  // oder sendAccelDataViaCAN();
+            printf("📥 CAN-Anfrage empfangen (ID=0x123, Data=0xAB)\r\n");
+            can_send_requested = 1;  // ⬅ außerhalb des IRQ senden!
+        }
+        else
+        {
+            printf("⚠️ Falsche Nachricht: ID=0x%03" PRIX32 ", Data=0x%02X\r\n", rxHeader.Identifier, rxData[0]);
         }
     }
 }
-
 /* USER CODE END 0 */
 
 /**
@@ -303,47 +317,53 @@ int main(void)
   uint8_t power_ctl = ADXL345_ReadRegister(0x2D);
   printf("POWER_CTL: 0x%02X\r\n", power_ctl);
 
+
   while (1)
   {
+	    // Trigger prüfen
+	    if (triggered == 0 && HAL_GPIO_ReadPin(Trigger_GPIO_Port, Trigger_Pin) == GPIO_PIN_SET)
+	    {
+	        printf(" Trigger erkannt\n");
+	        triggered = 1;
+	        startSampling = 1;
+	    }
 
-		  // Trigger prüfen
-		      if (triggered == 0 && HAL_GPIO_ReadPin(Trigger_GPIO_Port, Trigger_Pin) == GPIO_PIN_SET)
-		      {
-		          printf(" Trigger erkannt\n");
-		          triggered = 1;
-		          startSampling = 1;
-		      }
+	    // Aufnahme starten
+	    if (startSampling && recording == 0)
+	    {
+	        printf("Aufzeichnung startet...\r\n");
+	        sampleIndex = 0;
+	        recording = 1;
+	        startSampling = 0;
+	        BSP_LED_On(LED_GREEN);
+	    }
 
-		      // Aufnahme starten
-		      if (startSampling && recording == 0)
-		      {
-		          printf("Aufzeichnung startet...\r\n");
-		          sampleIndex = 0;
-		          recording = 1;
-		          startSampling = 0;
-		          BSP_LED_On(LED_GREEN);
-		      }
+	    // Ausgabe nach der Aufzeichnung
+	    if (recording == 0 && sampleIndex == SAMPLE_COUNT)
+	    {
+	        printf(" Aufzeichnung abgeschlossen – sende Daten:\r\n");
 
-		      // Ausgabe nach der Aufzeichnung
-		      if (recording == 0 && sampleIndex == SAMPLE_COUNT)
-		      {
-		          printf(" Aufzeichnung abgeschlossen – sende Daten:\r\n");
+	        for (int i = 0; i < SAMPLE_COUNT; i++)
+	        {
+	            printf("%d,%d,%d\r\n", accelBuffer[i].x, accelBuffer[i].y, accelBuffer[i].z);
+	            HAL_Delay(1);  // optional: UART entlasten
+	        }
 
-		          for (int i = 0; i < SAMPLE_COUNT; i++)
-		          {
-		              printf("%d,%d,%d\r\n", accelBuffer[i].x, accelBuffer[i].y, accelBuffer[i].z);
-		              HAL_Delay(1);  // optional: UART entlasten
-		          }
-		          // CAN Senden
-		          send_data_over_can();
+	        sampleIndex = 0;
+	        triggered = 0;
+	        BSP_LED_Off(LED_GREEN);
+	    }
 
-		          sampleIndex = 0;
-		          triggered = 0;
-		          // LED AUS (Aufzeichnung + Senden fertig)
-		          BSP_LED_Off(LED_GREEN);
+	    // 🔁 WICHTIG: CAN-Sendeanforderung auswerten – IMMER prüfen!
+	    if (can_send_requested)
+	    {
+	        can_send_requested = 0;
+	        send_data_over_can();  // wird außerhalb vom IRQ sicher ausgeführt
+	    }
 
 
-	  }
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -415,7 +435,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Instance = FDCAN1;
   hfdcan1.Init.ClockDivider = FDCAN_CLOCK_DIV1;
   hfdcan1.Init.FrameFormat = FDCAN_FRAME_CLASSIC;
-  hfdcan1.Init.Mode = FDCAN_MODE_EXTERNAL_LOOPBACK;
+  hfdcan1.Init.Mode = FDCAN_MODE_NORMAL;
   hfdcan1.Init.AutoRetransmission = ENABLE;
   hfdcan1.Init.TransmitPause = DISABLE;
   hfdcan1.Init.ProtocolException = DISABLE;
@@ -423,7 +443,7 @@ static void MX_FDCAN1_Init(void)
   hfdcan1.Init.NominalSyncJumpWidth = 1;
   hfdcan1.Init.NominalTimeSeg1 = 6;
   hfdcan1.Init.NominalTimeSeg2 = 3;
-  hfdcan1.Init.DataPrescaler = 1;
+  hfdcan1.Init.DataPrescaler = 34;
   hfdcan1.Init.DataSyncJumpWidth = 1;
   hfdcan1.Init.DataTimeSeg1 = 1;
   hfdcan1.Init.DataTimeSeg2 = 1;
