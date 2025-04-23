@@ -3,7 +3,10 @@
 
 [![Platform](https://img.shields.io/badge/platform-STM32-blue.svg)]()
 [![Interface](https://img.shields.io/badge/interface-CAN%2FUART-green.svg)]()
-[![Status](https://img.shields.io/badge/status-Development-yellow.svg)]()
+[![Status](https://img.shields.io/badge/status-Stable-brightgreen.svg)]()
+[![License](https://img.shields.io/badge/license-CC0--1.0-lightgrey.svg)]()
+[![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)]()
 
 ## 🚀 Features
 
