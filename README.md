@@ -40,18 +40,30 @@ STM32 microcontroller with:
 
 ## 🧪 Example Workflow
 
-1. Startup  
-2. Wait for trigger input (PA8 HIGH)  
-3. Sample 1000 accelerometer values (XYZ)  
-4. After sampling:  
-   - Send data over UART (CSV format)  
-   - Send header + chunked payload via CAN  
+1. **Boot**  
+2. **Wait** for trigger (PA8 ↑)  
+3. **Acquire** 1000 XYZ samples (1 ms cadence)  
+4. **Transmit**  
+   - UART: CSV line per sample  
+   - CAN FD: Header + chunked payload → CRC-8 terminator  
+
+---
 
 ## 💬 CAN Protocol Overview
 
-- **Request:** ID 0x123, single byte 0xAB to request data  
-- **Header:** ID 0x321, first frame = 2 bytes length (e.g. 0x27 0x11 = 10001)  
-- **Payload:** subsequent frames with raw buffer data  
+| Frame | CAN ID | DLC | Payload |
+|-------|--------|-----|---------|
+| **Request**  | `0x123` | 1 | `0xAB` (host → logger) |
+| **Header**   | `0x321` | 3 | `LEN_H`, `LEN_L`, `CHUNK_CNT` |
+| **Payload**  | `0x322` … `0x32F` | up to 64 | Raw data bytes (XYZ buffer) |
+| **CRC**      | `0x330` | 1 | CRC-8 (XOR of `LEN` + payload) |
+
+- **LEN** = 2000 bytes (1000 samples × 2 bytes per axis)  
+- **CHUNK_CNT** = ceil(LEN / 64)  
+- CRC is calculated after the final payload frame and sent in its own frame.
+
+> *Default bitrate:* 500 kbit/s nominal.
+
 
 ## 📂 Folder Structure
 
