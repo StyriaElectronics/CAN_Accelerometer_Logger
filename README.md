@@ -83,7 +83,11 @@ CAN_Accelerometer_Logger/
 
 ## 📄 License
 
-This project is licensed under [CC0 1.0 Universal](https://creativecommons.org/publicdomain/zero/1.0/) (Public Domain Dedication). You can use it without attribution – though a ⭐ on GitHub is always appreciated :)
+This project is licensed under **CC0 1.0 Universal (Public Domain Dedication)**. You can use it freely without attribution – though a ⭐ on GitHub is always appreciated :)
+
+⚠️ **Disclaimer**:  
+This project is provided "as is" without warranty of any kind, either expressed or implied.  
+In no event shall the author(s) be liable for any claim, damages, or other liability arising from, out of, or in connection with the use or other dealings in this project.
 
 ## ✨ Credits
 
